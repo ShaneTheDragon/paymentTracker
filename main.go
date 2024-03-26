@@ -8,6 +8,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -73,13 +75,87 @@ func saveToken(path string, token *oauth2.Token) {
 	json.NewEncoder(f).Encode(token)
 }
 
+// parseAmountFromSummary attempts to find and parse an amount from an event summary.
+func parseAmountFromSummary(summary string) (float64, bool) {
+	// Regex to find an amount in the format "£999,000.00" or without the £ and comma.
+	re := regexp.MustCompile(`£?(\d{1,3}(,\d{3})*|\d+)(\.\d{2})?`)
+	matches := re.FindStringSubmatch(summary)
+	if len(matches) == 0 {
+		return 0, false // No match found
+	}
+	amountStr := matches[0]
+	// Remove £ and comma for parsing
+	amountStr = strings.ReplaceAll(amountStr, "£", "")
+	amountStr = strings.ReplaceAll(amountStr, ",", "")
+	amount, err := strconv.ParseFloat(amountStr, 64)
+	if err != nil {
+		return 0, false // Failed to parse amount
+	}
+	return amount, true
+}
+
+// calculateTotalPayments goes through event items and sums up all payment amounts.
+func calculateTotalPayments(items []*calendar.Event) float64 {
+	var total float64
+	for _, item := range items {
+		if amount, ok := parseAmountFromSummary(item.Summary); ok {
+			total += amount
+		}
+	}
+	return total
+}
+
+func manageTotalRemainingEvent(srv *calendar.Service, total float64, periodEnd time.Time) error {
+	// First, find and delete any existing "Total Remaining" event
+	timeMin := time.Now().Format(time.RFC3339)
+	timeMax := periodEnd.Format(time.RFC3339)
+	events, err := srv.Events.List("primary").
+		ShowDeleted(false).
+		SingleEvents(true).
+		TimeMin(timeMin).
+		TimeMax(timeMax).
+		Q("Total Remaining").Do()
+
+	if err != nil {
+		return fmt.Errorf("unable to retrieve events: %v", err)
+	}
+
+	for _, item := range events.Items {
+		if strings.HasPrefix(item.Summary, "Total Remaining") {
+			err := srv.Events.Delete("primary", item.Id).Do()
+			if err != nil {
+				return fmt.Errorf("unable to delete event: %v", err)
+			}
+		}
+	}
+
+	// Then, create a new "Total Remaining" event
+	event := &calendar.Event{
+		Summary: fmt.Sprintf("Total Remaining £%.2f", total),
+		Start: &calendar.EventDateTime{
+			Date: periodEnd.Format("2006-01-02"),
+		},
+		End: &calendar.EventDateTime{
+			Date: periodEnd.AddDate(0, 0, 1).Format("2006-01-02"),
+		},
+		ColorId: "11", // Assuming "11" is red, but this might need to be adjusted based on your calendar's colorId settings
+	}
+
+	_, err = srv.Events.Insert("primary", event).Do()
+	if err != nil {
+		return fmt.Errorf("unable to create event: %v", err)
+	}
+
+	return nil
+}
+
 func main() {
 	b, err := ioutil.ReadFile("./credentials/credentials.json")
 	if err != nil {
 		log.Fatalf("Unable to read client secret file: %v", err)
 	}
 
-	config, err := google.ConfigFromJSON(b, calendar.CalendarReadonlyScope)
+	config, err := google.ConfigFromJSON(b, calendar.CalendarScope)
 	if err != nil {
 		log.Fatalf("Unable to parse client secret file to config: %v", err)
 	}
@@ -92,32 +168,14 @@ func main() {
 	}
 
 	now := time.Now()
-	year, month, day := now.Date()
-	location := now.Location()
-
-	var timeMin, timeMax time.Time
-
-	// Determine the correct period based on the current date
-	if day >= 16 {
-		// If today is the 16th or later, timeMin is today, and timeMax is the 15th of the next month
-		timeMin = time.Date(year, month, day, 0, 0, 0, 0, location)
-		if month == 12 {
-			timeMax = time.Date(year+1, time.January, 15, 23, 59, 59, 0, location)
-		} else {
-			timeMax = time.Date(year, month+1, 15, 23, 59, 59, 0, location)
-		}
-	} else {
-		// If today is before the 16th, timeMin is the 16th of last month, and timeMax is today
-		if month == 1 {
-			timeMin = time.Date(year-1, time.December, 16, 0, 0, 0, 0, location)
-		} else {
-			timeMin = time.Date(year, month-1, 16, 0, 0, 0, 0, location)
-		}
-		timeMax = time.Date(year, month, day, 23, 59, 59, 0, location)
+	var timeMin time.Time = now
+	var timeMax time.Time = time.Date(now.Year(), now.Month(), 15, 23, 59, 59, 0, now.Location())
+	if now.Day() > 15 {
+		timeMax = timeMax.AddDate(0, 1, 0)
 	}
 
 	fmt.Println("Checking 'Payment' events from", timeMin.Format("2006-01-02"), "to", timeMax.Format("2006-01-02"))
-
+	var total float64
 	var pageToken string
 	for {
 		events, err := srv.Events.List("primary").ShowDeleted(false).
@@ -127,20 +185,21 @@ func main() {
 			log.Fatalf("Unable to retrieve events: %v", err)
 		}
 
-		if len(events.Items) == 0 {
-			fmt.Println("No upcoming 'Payment' events found.")
-			break
-		}
-
-		for _, item := range events.Items {
-			if item.Start.Date != "" && strings.HasPrefix(item.Summary, "Payment") {
-				fmt.Printf("%v - %v\n", item.Start.Date, item.Summary)
-			}
-		}
+		total += calculateTotalPayments(events.Items)
 
 		pageToken = events.NextPageToken
 		if pageToken == "" {
 			break // No more pages to fetch
 		}
+	}
+
+	// Assume the period end is the last day of the current period. Adjust if needed.
+	periodEnd := time.Date(now.Year(), now.Month(), 15, 23, 59, 59, 0, now.Location())
+	if now.Day() > 15 {
+		periodEnd = periodEnd.AddDate(0, 1, 0)
+	}
+
+	if err := manageTotalRemainingEvent(srv, total, periodEnd); err != nil {
+		log.Fatalf("Error managing the 'Total Remaining' event: %v", err)
 	}
 }
