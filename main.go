@@ -105,21 +105,32 @@ func calculateTotalPayments(items []*calendar.Event) float64 {
 	return total
 }
 
-func manageTotalRemainingEvent(srv *calendar.Service, total float64, periodEnd time.Time) error {
-	// First, find and delete any existing "Total Remaining" event
-	timeMin := time.Now().Format(time.RFC3339)
-	timeMax := periodEnd.Format(time.RFC3339)
+func manageTotalRemainingEvent(srv *calendar.Service, total float64, periodStart time.Time) error {
+	// Calculate the last day of the month for the event
+	// If today is before the 16th, use the last day of the previous month; otherwise, use the current month's last day.
+	var lastDayOfMonth time.Time
+	if periodStart.Day() >= 16 {
+		// Use the last day of the current month
+		nextMonth := periodStart.AddDate(0, 1, -periodStart.Day())
+		lastDayOfMonth = nextMonth.AddDate(0, 0, -1)
+	} else {
+		// Use the last day of the previous month
+		lastDayOfMonth = periodStart.AddDate(0, 0, -periodStart.Day())
+	}
+
+	// Define the event summary with the total amount
+	eventSummary := fmt.Sprintf("Total Remaining £%.2f", total)
+
+	// Delete any existing "Total Remaining" events within the target month
 	events, err := srv.Events.List("primary").
 		ShowDeleted(false).
 		SingleEvents(true).
-		TimeMin(timeMin).
-		TimeMax(timeMax).
+		TimeMin(periodStart.Format(time.RFC3339)).
+		TimeMax(lastDayOfMonth.Format(time.RFC3339)).
 		Q("Total Remaining").Do()
-
 	if err != nil {
 		return fmt.Errorf("unable to retrieve events: %v", err)
 	}
-
 	for _, item := range events.Items {
 		if strings.HasPrefix(item.Summary, "Total Remaining") {
 			err := srv.Events.Delete("primary", item.Id).Do()
@@ -129,16 +140,16 @@ func manageTotalRemainingEvent(srv *calendar.Service, total float64, periodEnd t
 		}
 	}
 
-	// Then, create a new "Total Remaining" event
+	// Create a new "Total Remaining" event on the last day of the relevant month
 	event := &calendar.Event{
-		Summary: fmt.Sprintf("Total Remaining £%.2f", total),
+		Summary: eventSummary,
 		Start: &calendar.EventDateTime{
-			Date: periodEnd.Format("2006-01-02"),
+			Date: lastDayOfMonth.Format("2006-01-02"),
 		},
 		End: &calendar.EventDateTime{
-			Date: periodEnd.AddDate(0, 0, 1).Format("2006-01-02"),
+			Date: lastDayOfMonth.AddDate(0, 0, 1).Format("2006-01-02"),
 		},
-		ColorId: "11", // Assuming "11" is red, but this might need to be adjusted based on your calendar's colorId settings
+		ColorId: "11", // Assuming "11" is red; adjust based on your calendar settings
 	}
 
 	_, err = srv.Events.Insert("primary", event).Do()
