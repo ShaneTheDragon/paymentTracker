@@ -120,16 +120,13 @@ func manageTotalRemainingEvent(srv *calendar.Service, total float64, periodStart
 		lastDayOfTargetMonth = firstOfCurrentMonth.Add(-24 * time.Hour)
 	}
 
-	// Find and delete any existing "Total Remaining" events in the current month
 	events, err := srv.Events.List("primary").
 		ShowDeleted(false).
 		SingleEvents(true).
-		TimeMin(time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location()).Format(time.RFC3339)).
-		TimeMax(lastDayOfTargetMonth.Format(time.RFC3339)).
-		Q("Total Remaining").Do()
+		Q("Total Remaining").Do() // Remove TimeMin and TimeMax for this query
 
 	if err != nil {
-		return fmt.Errorf("unable to retrieve events: %v", err)
+		log.Fatalf("Failed to retrieve events: %v", err)
 	}
 
 	for _, item := range events.Items {
