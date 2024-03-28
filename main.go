@@ -19,6 +19,12 @@ import (
 	"google.golang.org/api/option"
 )
 
+var (
+	TotalRemainingOn = "Last Day of the Month" // Options: "Last Day of the Month", "First Day of the Month", "Pay Date"
+	TimeZone         = "Asia/Karachi"          // Default time zone
+	PayDate          = 16
+)
+
 // Retrieve a token, saves the token, then returns the generated client.
 func getClient(config *oauth2.Config) *http.Client {
 	// The file token.json stores the user's access and refresh tokens, and is
@@ -105,34 +111,41 @@ func calculateTotalPayments(items []*calendar.Event) float64 {
 	return total
 }
 
-func manageTotalRemainingEvent(srv *calendar.Service, total float64, periodStart time.Time) error {
-	now := time.Now()
-	var lastDayOfTargetMonth time.Time
+func manageTotalRemainingEvent(srv *calendar.Service, total float64) error {
+	loc, err := time.LoadLocation(TimeZone)
+	if err != nil {
+		log.Fatalf("Failed to load time zone '%s': %v", TimeZone, err)
+	}
+	now := time.Now().In(loc)
 
-	// Check if current date is on or after the 16th
-	if now.Day() >= 16 {
-		// Set to the last day of the current month
-		firstOfNextMonth := time.Date(now.Year(), now.Month()+1, 1, 0, 0, 0, 0, now.Location())
-		lastDayOfTargetMonth = firstOfNextMonth.Add(-24 * time.Hour)
-	} else {
-		// Set to the last day of the previous month
-		firstOfCurrentMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
-		lastDayOfTargetMonth = firstOfCurrentMonth.Add(-24 * time.Hour)
+	var eventDate time.Time
+
+	switch TotalRemainingOn {
+	case "Last Day of the Month":
+		firstOfNextMonth := time.Date(now.Year(), now.Month()+1, 1, 0, 0, 0, 0, loc)
+		eventDate = firstOfNextMonth.Add(-24 * time.Hour)
+	case "First Day of the Month":
+		eventDate = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, loc)
+	case "Pay Date":
+		// Assuming PayDate is a global variable indicating the day of the month the pay occurs
+		eventDate = time.Date(now.Year(), now.Month(), PayDate, 0, 0, 0, 0, loc)
+		if now.Day() > PayDate {
+			// If today is after the pay date, set the event for the pay date of the next month
+			eventDate = eventDate.AddDate(0, 1, 0)
+		}
+	default:
+		log.Fatalf("Invalid TotalRemainingOn value: %v", TotalRemainingOn)
 	}
 
+	// Delete existing "Total Remaining" events
 	events, err := srv.Events.List("primary").
 		ShowDeleted(false).
 		SingleEvents(true).
-		Q("Total Remaining").Do() // Remove TimeMin and TimeMax for this query
+		Q("Total Remaining").Do()
 
 	if err != nil {
 		log.Fatalf("Failed to retrieve events: %v", err)
 	}
-
-	// fmt.Printf("Found %d 'Total Remaining' events.\n", len(events.Items))
-	// for _, item := range events.Items {
-	// 	fmt.Printf("Event ID: %s, Summary: %s\n", item.Id, item.Summary)
-	// } ---uncomment to see how many deleted events.
 
 	for _, item := range events.Items {
 		if strings.HasPrefix(item.Summary, "Total Remaining") {
@@ -143,18 +156,18 @@ func manageTotalRemainingEvent(srv *calendar.Service, total float64, periodStart
 		}
 	}
 
-	// Create the new "Total Remaining" event on the last day of the target month
+	// Create the new "Total Remaining" event based on eventDate and TimeZone
 	event := &calendar.Event{
 		Summary: fmt.Sprintf("Total Remaining £%.2f", total),
 		Start: &calendar.EventDateTime{
-			Date:     lastDayOfTargetMonth.Format("2006-01-02"),
-			TimeZone: "Asia/Karachi",
+			Date:     eventDate.Format("2006-01-02"),
+			TimeZone: TimeZone,
 		},
 		End: &calendar.EventDateTime{
-			Date:     lastDayOfTargetMonth.AddDate(0, 0, 1).Format("2006-01-02"),
-			TimeZone: "Asia/Karachi",
+			Date:     eventDate.AddDate(0, 0, 1).Format("2006-01-02"),
+			TimeZone: TimeZone,
 		},
-		ColorId: "11", // Assuming "11" is red; this might need to be adjusted based on your calendar settings
+		ColorId: "11", // Assuming "11" is red; adjust based on your calendar settings
 	}
 
 	_, err = srv.Events.Insert("primary", event).Do()
@@ -209,13 +222,8 @@ func main() {
 		}
 	}
 
-	// Assume the period end is the last day of the current period. Adjust if needed.
-	periodEnd := time.Date(now.Year(), now.Month(), 15, 23, 59, 59, 0, now.Location())
-	if now.Day() > 15 {
-		periodEnd = periodEnd.AddDate(0, 1, 0)
-	}
-
-	if err := manageTotalRemainingEvent(srv, total, periodEnd); err != nil {
+	// Directly call manageTotalRemainingEvent without passing periodEnd
+	if err := manageTotalRemainingEvent(srv, total); err != nil {
 		log.Fatalf("Error managing the 'Total Remaining' event: %v", err)
 	}
 }
