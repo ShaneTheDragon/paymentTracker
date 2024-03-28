@@ -129,6 +129,11 @@ func manageTotalRemainingEvent(srv *calendar.Service, total float64, periodStart
 		log.Fatalf("Failed to retrieve events: %v", err)
 	}
 
+	// fmt.Printf("Found %d 'Total Remaining' events.\n", len(events.Items))
+	// for _, item := range events.Items {
+	// 	fmt.Printf("Event ID: %s, Summary: %s\n", item.Id, item.Summary)
+	// } ---uncomment to see how many deleted events.
+
 	for _, item := range events.Items {
 		if strings.HasPrefix(item.Summary, "Total Remaining") {
 			err := srv.Events.Delete("primary", item.Id).Do()
@@ -142,10 +147,12 @@ func manageTotalRemainingEvent(srv *calendar.Service, total float64, periodStart
 	event := &calendar.Event{
 		Summary: fmt.Sprintf("Total Remaining £%.2f", total),
 		Start: &calendar.EventDateTime{
-			Date: lastDayOfTargetMonth.Format("2006-01-02"),
+			Date:     lastDayOfTargetMonth.Format("2006-01-02"),
+			TimeZone: "Asia/Karachi",
 		},
 		End: &calendar.EventDateTime{
-			Date: lastDayOfTargetMonth.AddDate(0, 0, 1).Format("2006-01-02"),
+			Date:     lastDayOfTargetMonth.AddDate(0, 0, 1).Format("2006-01-02"),
+			TimeZone: "Asia/Karachi",
 		},
 		ColorId: "11", // Assuming "11" is red; this might need to be adjusted based on your calendar settings
 	}
