@@ -22,7 +22,7 @@ import (
 var (
 	TotalRemainingOn = "Last Day of the Month" // Options: "Last Day of the Month", "First Day of the Month", "Pay Date"
 	TimeZone         = "Asia/Karachi"          // Default time zone
-	PayDate          = 16
+	PayDate          = 28
 )
 
 // Retrieve a token, saves the token, then returns the generated client.
@@ -83,8 +83,8 @@ func saveToken(path string, token *oauth2.Token) {
 
 // parseAmountFromSummary attempts to find and parse an amount from an event summary.
 func parseAmountFromSummary(summary string) (float64, bool) {
-	// Regex to find an amount in the format "£999,000.00" or without the £ and comma.
-	re := regexp.MustCompile(`£?(\d{1,3}(,\d{3})*|\d+)(\.\d{2})?`)
+	// Regex to find an amount in the format "£999,000" or "£999,000.00", with or without the £ and comma, and with optional decimal places.
+	re := regexp.MustCompile(`£?(\d{1,3}(,\d{3})*|\d+)(\.\d{1,2})?`)
 	matches := re.FindStringSubmatch(summary)
 	if len(matches) == 0 {
 		return 0, false // No match found
@@ -101,13 +101,33 @@ func parseAmountFromSummary(summary string) (float64, bool) {
 }
 
 // calculateTotalPayments goes through event items and sums up all payment amounts.
-func calculateTotalPayments(items []*calendar.Event) float64 {
+func calculateTotalPayments(srv *calendar.Service, startDate, endDate time.Time) float64 {
 	var total float64
-	for _, item := range items {
+	now := time.Now() // Get current time to compare with event dates
+
+	// Ensure start date is not before today
+	if startDate.Before(now) {
+		startDate = now
+	}
+
+	events, err := srv.Events.List("primary").
+		ShowDeleted(false).
+		SingleEvents(true).
+		TimeMin(startDate.Format(time.RFC3339)).
+		TimeMax(endDate.Format(time.RFC3339)).
+		OrderBy("startTime").
+		Q("Payment").
+		Do()
+	if err != nil {
+		log.Fatalf("Unable to retrieve payment events: %v", err)
+	}
+
+	for _, item := range events.Items {
 		if amount, ok := parseAmountFromSummary(item.Summary); ok {
 			total += amount
 		}
 	}
+
 	return total
 }
 
@@ -184,11 +204,13 @@ func main() {
 		log.Fatalf("Unable to read client secret file: %v", err)
 	}
 
+	// Deserialize the credentials and initialize the config
 	config, err := google.ConfigFromJSON(b, calendar.CalendarScope)
 	if err != nil {
 		log.Fatalf("Unable to parse client secret file to config: %v", err)
 	}
 
+	// Now that 'config' is defined, you can use it to get a client
 	client := getClient(config)
 
 	srv, err := calendar.NewService(context.Background(), option.WithHTTPClient(client))
@@ -196,33 +218,24 @@ func main() {
 		log.Fatalf("Unable to retrieve Calendar client: %v", err)
 	}
 
-	now := time.Now()
-	var timeMin time.Time = now
-	var timeMax time.Time = time.Date(now.Year(), now.Month(), 15, 23, 59, 59, 0, now.Location())
-	if now.Day() > 15 {
-		timeMax = timeMax.AddDate(0, 1, 0)
+	loc, err := time.LoadLocation(TimeZone)
+	if err != nil {
+		log.Fatalf("Failed to load time zone '%s': %v", TimeZone, err)
+	}
+	now := time.Now().In(loc)
+
+	// Calculate the start and end dates for the payment calculation
+	var startDate, endDate time.Time
+	if now.Day() >= PayDate {
+		startDate = time.Date(now.Year(), now.Month(), PayDate, 0, 0, 0, 0, loc)
+		endDate = startDate.AddDate(0, 1, 0).Add(-time.Second)
+	} else {
+		startDate = time.Date(now.Year(), now.Month()-1, PayDate, 0, 0, 0, 0, loc)
+		endDate = startDate.AddDate(0, 1, 0).Add(-time.Second)
 	}
 
-	fmt.Println("Checking 'Payment' events from", timeMin.Format("2006-01-02"), "to", timeMax.Format("2006-01-02"))
-	var total float64
-	var pageToken string
-	for {
-		events, err := srv.Events.List("primary").ShowDeleted(false).
-			SingleEvents(true).TimeMin(timeMin.Format(time.RFC3339)).TimeMax(timeMax.Format(time.RFC3339)).
-			OrderBy("startTime").Q("Payment").PageToken(pageToken).Do()
-		if err != nil {
-			log.Fatalf("Unable to retrieve events: %v", err)
-		}
+	total := calculateTotalPayments(srv, startDate, endDate)
 
-		total += calculateTotalPayments(events.Items)
-
-		pageToken = events.NextPageToken
-		if pageToken == "" {
-			break // No more pages to fetch
-		}
-	}
-
-	// Directly call manageTotalRemainingEvent without passing periodEnd
 	if err := manageTotalRemainingEvent(srv, total); err != nil {
 		log.Fatalf("Error managing the 'Total Remaining' event: %v", err)
 	}
