@@ -198,6 +198,74 @@ func manageTotalRemainingEvent(srv *calendar.Service, total float64) error {
 	return nil
 }
 
+// Generates future "Total Remaining" events for the next 11 months
+func generateFutureTotalRemainingEvents(srv *calendar.Service, loc *time.Location) {
+	now := time.Now().In(loc)
+
+	for i := 1; i <= 11; i++ {
+		futureMonth := now.AddDate(0, i, 0)
+		year, month := futureMonth.Year(), futureMonth.Month()
+
+		startDate, endDate := getPaymentPeriodDates(year, int(month), loc)
+		total := calculateTotalPayments(srv, startDate, endDate)
+		if err := manageTotalRemainingEventForMonth(srv, total, year, month, loc); err != nil {
+			log.Fatalf("Error managing the 'Total Remaining' event for %v %d: %v", month, year, err)
+		}
+	}
+}
+
+// Helper function to calculate the start and end dates for payment calculations
+func getPaymentPeriodDates(year, month int, loc *time.Location) (startDate, endDate time.Time) {
+	startDate = time.Date(year, time.Month(month), PayDate, 0, 0, 0, 0, loc)
+	if month == 12 {
+		endDate = time.Date(year+1, time.Month(1), PayDate, 0, 0, 0, 0, loc).Add(-time.Second)
+	} else {
+		endDate = time.Date(year, time.Month(month+1), PayDate, 0, 0, 0, 0, loc).Add(-time.Second)
+	}
+	return
+}
+
+func manageTotalRemainingEventForMonth(srv *calendar.Service, total float64, year int, month time.Month, loc *time.Location) error {
+	var eventDate time.Time
+
+	switch TotalRemainingOn {
+	case "Last Day of the Month":
+		// Calculate the last day of the given month
+		firstOfNextMonth := time.Date(year, month+1, 1, 0, 0, 0, 0, loc)
+		lastDayOfMonth := firstOfNextMonth.Add(-24 * time.Hour)
+		eventDate = lastDayOfMonth
+	case "First Day of the Month":
+		eventDate = time.Date(year, month, 1, 0, 0, 0, 0, loc)
+	case "Pay Date":
+		// For "Pay Date", you might want to adjust based on your business logic.
+		// The below code will set the event for the PayDate of the given month
+		eventDate = time.Date(year, month, PayDate, 0, 0, 0, 0, loc)
+	default:
+		return fmt.Errorf("invalid TotalRemainingOn value: %v", TotalRemainingOn)
+	}
+
+	// Create and insert the event as done in manageTotalRemainingEvent
+	event := &calendar.Event{
+		Summary: fmt.Sprintf("Total Remaining £%.2f", total),
+		Start: &calendar.EventDateTime{
+			Date:     eventDate.Format("2006-01-02"),
+			TimeZone: loc.String(),
+		},
+		End: &calendar.EventDateTime{
+			Date:     eventDate.AddDate(0, 0, 1).Format("2006-01-02"),
+			TimeZone: loc.String(),
+		},
+		ColorId: "11", // Assuming "11" represents the color red
+	}
+
+	_, err := srv.Events.Insert("primary", event).Do()
+	if err != nil {
+		return fmt.Errorf("unable to create event: %v", err)
+	}
+
+	return nil
+}
+
 func main() {
 	b, err := ioutil.ReadFile("./credentials/credentials.json")
 	if err != nil {
@@ -239,4 +307,7 @@ func main() {
 	if err := manageTotalRemainingEvent(srv, total); err != nil {
 		log.Fatalf("Error managing the 'Total Remaining' event: %v", err)
 	}
+
+	// Generate future "Total Remaining" events
+	generateFutureTotalRemainingEvents(srv, loc)
 }
