@@ -22,7 +22,7 @@ import (
 var (
 	TotalRemainingOn = "Last Day of the Month" // Options: "Last Day of the Month", "First Day of the Month", "Pay Date"
 	TimeZone         = "Asia/Karachi"          // Default time zone
-	PayDate          = 28
+	PayDate          = 16
 )
 
 // Retrieve a token, saves the token, then returns the generated client.
@@ -266,7 +266,7 @@ func manageTotalRemainingEventForMonth(srv *calendar.Service, total float64, yea
 	return nil
 }
 
-func main() {
+func taskToRun() {
 	b, err := ioutil.ReadFile("./credentials/credentials.json")
 	if err != nil {
 		log.Fatalf("Unable to read client secret file: %v", err)
@@ -310,4 +310,13 @@ func main() {
 
 	// Generate future "Total Remaining" events
 	generateFutureTotalRemainingEvents(srv, loc)
+}
+
+func main() {
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+
+	for ; true; <-ticker.C {
+		taskToRun()
+	}
 }
