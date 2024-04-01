@@ -258,6 +258,9 @@ func manageTotalRemainingEventForMonth(srv *calendar.Service, total float64, yea
 		ColorId: "11", // Assuming "11" represents the color red
 	}
 
+	// Introduce a delay before creating the event
+	time.Sleep(2 * time.Second)
+
 	_, err := srv.Events.Insert("primary", event).Do()
 	if err != nil {
 		return fmt.Errorf("unable to create event: %v", err)
