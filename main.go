@@ -19,12 +19,6 @@ import (
 	"google.golang.org/api/option"
 )
 
-var (
-	TotalRemainingOn = "Last Day of the Month" // Options: "Last Day of the Month", "First Day of the Month", "Pay Date"
-	TimeZone         = "Asia/Karachi"          // Default time zone
-	PayDate          = 16
-)
-
 // Retrieve a token, saves the token, then returns the generated client.
 func getClient(config *oauth2.Config) *http.Client {
 	// The file token.json stores the user's access and refresh tokens, and is
@@ -81,6 +75,37 @@ func saveToken(path string, token *oauth2.Token) {
 	json.NewEncoder(f).Encode(token)
 }
 
+type Config struct {
+	TotalRemainingOn string
+	TimeZone         string
+	PayDate          int
+}
+
+func getConfig() Config {
+	var config Config
+
+	config.TotalRemainingOn = os.Getenv("TOTAL_REMAINING_ON")
+	if config.TotalRemainingOn == "" {
+		config.TotalRemainingOn = "Last Day of the Month" // Default value
+	}
+
+	config.TimeZone = os.Getenv("TIME_ZONE")
+	if config.TimeZone == "" {
+		config.TimeZone = "Asia/Karachi" // Default value
+	}
+
+	payDateStr := os.Getenv("PAY_DATE")
+	payDate, err := strconv.Atoi(payDateStr)
+	if err != nil {
+		log.Printf("Error converting PAY_DATE to int or not set: %v, using default value 16", err)
+		config.PayDate = 16 // Default value
+	} else {
+		config.PayDate = payDate
+	}
+
+	return config
+}
+
 // parseAmountFromSummary attempts to find and parse an amount from an event summary.
 func parseAmountFromSummary(summary string) (float64, bool) {
 	// Regex to find an amount in the format "£999,000" or "£999,000.00", with or without the £ and comma, and with optional decimal places.
@@ -131,30 +156,28 @@ func calculateTotalPayments(srv *calendar.Service, startDate, endDate time.Time)
 	return total
 }
 
-func manageTotalRemainingEvent(srv *calendar.Service, total float64) error {
-	loc, err := time.LoadLocation(TimeZone)
+func manageTotalRemainingEvent(srv *calendar.Service, total float64, config Config) error {
+	loc, err := time.LoadLocation(config.TimeZone)
 	if err != nil {
-		log.Fatalf("Failed to load time zone '%s': %v", TimeZone, err)
+		log.Fatalf("Failed to load time zone '%s': %v", config.TimeZone, err)
 	}
 	now := time.Now().In(loc)
 
 	var eventDate time.Time
 
-	switch TotalRemainingOn {
+	switch config.TotalRemainingOn {
 	case "Last Day of the Month":
 		firstOfNextMonth := time.Date(now.Year(), now.Month()+1, 1, 0, 0, 0, 0, loc)
 		eventDate = firstOfNextMonth.Add(-24 * time.Hour)
 	case "First Day of the Month":
 		eventDate = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, loc)
 	case "Pay Date":
-		// Assuming PayDate is a global variable indicating the day of the month the pay occurs
-		eventDate = time.Date(now.Year(), now.Month(), PayDate, 0, 0, 0, 0, loc)
-		if now.Day() > PayDate {
-			// If today is after the pay date, set the event for the pay date of the next month
+		eventDate = time.Date(now.Year(), now.Month(), config.PayDate, 0, 0, 0, 0, loc)
+		if now.Day() > config.PayDate {
 			eventDate = eventDate.AddDate(0, 1, 0)
 		}
 	default:
-		log.Fatalf("Invalid TotalRemainingOn value: %v", TotalRemainingOn)
+		log.Fatalf("Invalid TotalRemainingOn value: %v", config.TotalRemainingOn)
 	}
 
 	// Delete existing "Total Remaining" events
@@ -181,11 +204,11 @@ func manageTotalRemainingEvent(srv *calendar.Service, total float64) error {
 		Summary: fmt.Sprintf("Total Remaining £%.2f", total),
 		Start: &calendar.EventDateTime{
 			Date:     eventDate.Format("2006-01-02"),
-			TimeZone: TimeZone,
+			TimeZone: config.TimeZone,
 		},
 		End: &calendar.EventDateTime{
 			Date:     eventDate.AddDate(0, 0, 1).Format("2006-01-02"),
-			TimeZone: TimeZone,
+			TimeZone: config.TimeZone,
 		},
 		ColorId: "11", // Assuming "11" is red; adjust based on your calendar settings
 	}
@@ -199,36 +222,40 @@ func manageTotalRemainingEvent(srv *calendar.Service, total float64) error {
 }
 
 // Generates future "Total Remaining" events for the next 11 months
-func generateFutureTotalRemainingEvents(srv *calendar.Service, loc *time.Location) {
+func generateFutureTotalRemainingEvents(srv *calendar.Service, config Config) {
+	loc, err := time.LoadLocation(config.TimeZone)
+	if err != nil {
+		log.Fatalf("Failed to load time zone '%s': %v", config.TimeZone, err)
+	}
 	now := time.Now().In(loc)
 
 	for i := 1; i <= 11; i++ {
 		futureMonth := now.AddDate(0, i, 0)
 		year, month := futureMonth.Year(), futureMonth.Month()
 
-		startDate, endDate := getPaymentPeriodDates(year, int(month), loc)
+		startDate, endDate := getPaymentPeriodDates(year, int(month), config.PayDate, loc)
 		total := calculateTotalPayments(srv, startDate, endDate)
-		if err := manageTotalRemainingEventForMonth(srv, total, year, month, loc); err != nil {
+		if err := manageTotalRemainingEventForMonth(srv, total, year, month, config, loc); err != nil {
 			log.Fatalf("Error managing the 'Total Remaining' event for %v %d: %v", month, year, err)
 		}
 	}
 }
 
-// Helper function to calculate the start and end dates for payment calculations
-func getPaymentPeriodDates(year, month int, loc *time.Location) (startDate, endDate time.Time) {
-	startDate = time.Date(year, time.Month(month), PayDate, 0, 0, 0, 0, loc)
+// getPaymentPeriodDates calculates the start and end dates for payment calculations based on the given year, month, and PayDate.
+func getPaymentPeriodDates(year, month int, payDate int, loc *time.Location) (startDate, endDate time.Time) {
+	startDate = time.Date(year, time.Month(month), payDate, 0, 0, 0, 0, loc)
 	if month == 12 {
-		endDate = time.Date(year+1, time.Month(1), PayDate, 0, 0, 0, 0, loc).Add(-time.Second)
+		endDate = time.Date(year+1, time.Month(1), payDate, 0, 0, 0, 0, loc).Add(-time.Second)
 	} else {
-		endDate = time.Date(year, time.Month(month+1), PayDate, 0, 0, 0, 0, loc).Add(-time.Second)
+		endDate = time.Date(year, time.Month(month+1), payDate, 0, 0, 0, 0, loc).Add(-time.Second)
 	}
 	return
 }
 
-func manageTotalRemainingEventForMonth(srv *calendar.Service, total float64, year int, month time.Month, loc *time.Location) error {
+func manageTotalRemainingEventForMonth(srv *calendar.Service, total float64, year int, month time.Month, config Config, loc *time.Location) error {
 	var eventDate time.Time
 
-	switch TotalRemainingOn {
+	switch config.TotalRemainingOn {
 	case "Last Day of the Month":
 		// Calculate the last day of the given month
 		firstOfNextMonth := time.Date(year, month+1, 1, 0, 0, 0, 0, loc)
@@ -237,14 +264,12 @@ func manageTotalRemainingEventForMonth(srv *calendar.Service, total float64, yea
 	case "First Day of the Month":
 		eventDate = time.Date(year, month, 1, 0, 0, 0, 0, loc)
 	case "Pay Date":
-		// For "Pay Date", you might want to adjust based on your business logic.
-		// The below code will set the event for the PayDate of the given month
-		eventDate = time.Date(year, month, PayDate, 0, 0, 0, 0, loc)
+		eventDate = time.Date(year, month, config.PayDate, 0, 0, 0, 0, loc)
 	default:
-		return fmt.Errorf("invalid TotalRemainingOn value: %v", TotalRemainingOn)
+		return fmt.Errorf("invalid TotalRemainingOn value: %v", config.TotalRemainingOn)
 	}
 
-	// Create and insert the event as done in manageTotalRemainingEvent
+	// Create and insert the event as done before
 	event := &calendar.Event{
 		Summary: fmt.Sprintf("Total Remaining £%.2f", total),
 		Start: &calendar.EventDateTime{
@@ -255,11 +280,8 @@ func manageTotalRemainingEventForMonth(srv *calendar.Service, total float64, yea
 			Date:     eventDate.AddDate(0, 0, 1).Format("2006-01-02"),
 			TimeZone: loc.String(),
 		},
-		ColorId: "11", // Assuming "11" represents the color red
+		ColorId: "11",
 	}
-
-	// Introduce a delay before creating the event
-	time.Sleep(2 * time.Second)
 
 	_, err := srv.Events.Insert("primary", event).Do()
 	if err != nil {
@@ -270,49 +292,53 @@ func manageTotalRemainingEventForMonth(srv *calendar.Service, total float64, yea
 }
 
 func taskToRun() {
+	config := getConfig() // Get configuration from environment variables
+
+	// Load OAuth2 configuration from your credentials file
 	b, err := ioutil.ReadFile("./credentials/credentials.json")
 	if err != nil {
 		log.Fatalf("Unable to read client secret file: %v", err)
 	}
 
-	// Deserialize the credentials and initialize the config
-	config, err := google.ConfigFromJSON(b, calendar.CalendarScope)
+	// Parse the OAuth2 configuration
+	oauth2Config, err := google.ConfigFromJSON(b, calendar.CalendarScope)
 	if err != nil {
 		log.Fatalf("Unable to parse client secret file to config: %v", err)
 	}
 
-	// Now that 'config' is defined, you can use it to get a client
-	client := getClient(config)
-
+	// Get the client using the OAuth2 configuration and previously saved token
+	client := getClient(oauth2Config)
 	srv, err := calendar.NewService(context.Background(), option.WithHTTPClient(client))
 	if err != nil {
 		log.Fatalf("Unable to retrieve Calendar client: %v", err)
 	}
 
-	loc, err := time.LoadLocation(TimeZone)
+	loc, err := time.LoadLocation(config.TimeZone)
 	if err != nil {
-		log.Fatalf("Failed to load time zone '%s': %v", TimeZone, err)
+		log.Fatalf("Failed to load time zone '%s': %v", config.TimeZone, err)
 	}
 	now := time.Now().In(loc)
 
-	// Calculate the start and end dates for the payment calculation
+	// Determine the current payment period based on today's date and PayDate
 	var startDate, endDate time.Time
-	if now.Day() >= PayDate {
-		startDate = time.Date(now.Year(), now.Month(), PayDate, 0, 0, 0, 0, loc)
+	if now.Day() >= config.PayDate {
+		startDate = time.Date(now.Year(), now.Month(), config.PayDate, 0, 0, 0, 0, loc)
 		endDate = startDate.AddDate(0, 1, 0).Add(-time.Second)
 	} else {
-		startDate = time.Date(now.Year(), now.Month()-1, PayDate, 0, 0, 0, 0, loc)
+		startDate = time.Date(now.Year(), now.Month()-1, config.PayDate, 0, 0, 0, 0, loc)
 		endDate = startDate.AddDate(0, 1, 0).Add(-time.Second)
 	}
 
+	// Calculate total payments for the current period
 	total := calculateTotalPayments(srv, startDate, endDate)
 
-	if err := manageTotalRemainingEvent(srv, total); err != nil {
+	// Manage "Total Remaining" event for the current period
+	if err := manageTotalRemainingEvent(srv, total, config); err != nil {
 		log.Fatalf("Error managing the 'Total Remaining' event: %v", err)
 	}
 
-	// Generate future "Total Remaining" events
-	generateFutureTotalRemainingEvents(srv, loc)
+	// Generate future "Total Remaining" events based on the configuration
+	generateFutureTotalRemainingEvents(srv, config)
 }
 
 func main() {
