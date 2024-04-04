@@ -79,29 +79,42 @@ type Config struct {
 	TotalRemainingOn string
 	TimeZone         string
 	PayDate          int
+	TickInterval     time.Duration // Tick interval in minutes
 }
 
 func getConfig() Config {
 	var config Config
+	// Reading configuration from environment variables
+	config.TotalRemainingOn = os.Getenv("TOTAL_REMAINING_ON")
+	config.TimeZone = os.Getenv("TIME_ZONE")
+	payDateStr := os.Getenv("PAY_DATE")
+	tickIntervalStr := os.Getenv("TICK_INTERVAL") //
 
 	config.TotalRemainingOn = os.Getenv("TOTAL_REMAINING_ON")
 	if config.TotalRemainingOn == "" {
-		config.TotalRemainingOn = "Last Day of the Month" // Default value
+		config.TotalRemainingOn = "First Day of the Month" // Default value
 	}
 
 	config.TimeZone = os.Getenv("TIME_ZONE")
 	if config.TimeZone == "" {
-		config.TimeZone = "Asia/Karachi" // Default value
+		config.TimeZone = "GMT" // Default value
 	}
 
-	payDateStr := os.Getenv("PAY_DATE")
+	// Convert PAY_DATE from string to int
 	payDate, err := strconv.Atoi(payDateStr)
 	if err != nil {
-		log.Printf("Error converting PAY_DATE to int or not set: %v, using default value 16", err)
-		config.PayDate = 16 // Default value
-	} else {
-		config.PayDate = payDate
+		log.Printf("Error converting PAY_DATE to int or not set: %v, using default value 16\n", err)
+		payDate = 1 // Default to 16 if conversion fails or not set
 	}
+	// Convert TICK_INTERVAL from string to int and then to duration in minutes
+	tickInterval, err := strconv.Atoi(tickIntervalStr)
+	if err != nil {
+		log.Printf("Error converting TICK_INTERVAL to int or not set: %v, using default value 60 minutes\n", err)
+		tickInterval = 1 // Default to 60 minutes if conversion fails or not set
+	}
+
+	config.PayDate = payDate
+	config.TickInterval = time.Duration(tickInterval) * time.Minute
 
 	return config
 }
@@ -342,7 +355,9 @@ func taskToRun() {
 }
 
 func main() {
-	ticker := time.NewTicker(1 * time.Hour)
+	config := getConfig() // Get configuration from environment variables
+
+	ticker := time.NewTicker(config.TickInterval)
 	defer ticker.Stop()
 
 	for ; true; <-ticker.C {
