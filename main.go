@@ -88,7 +88,7 @@ func getConfig() Config {
 	config.TotalRemainingOn = os.Getenv("TOTAL_REMAINING_ON")
 	config.TimeZone = os.Getenv("TIME_ZONE")
 	payDateStr := os.Getenv("PAY_DATE")
-	tickIntervalStr := os.Getenv("TICK_INTERVAL") //
+	tickIntervalStr := os.Getenv("RUN_TIMER") //
 
 	config.TotalRemainingOn = os.Getenv("TOTAL_REMAINING_ON")
 	if config.TotalRemainingOn == "" {
@@ -106,10 +106,10 @@ func getConfig() Config {
 		log.Printf("Error converting PAY_DATE to int or not set: %v, using default value 16\n", err)
 		payDate = 1 // Default to 16 if conversion fails or not set
 	}
-	// Convert TICK_INTERVAL from string to int and then to duration in minutes
+	// Convert RUN_TIMER from string to int and then to duration in minutes
 	tickInterval, err := strconv.Atoi(tickIntervalStr)
 	if err != nil {
-		log.Printf("Error converting TICK_INTERVAL to int or not set: %v, using default value 60 minutes\n", err)
+		log.Printf("Error converting RUN_TIMER to int or not set: %v, using default value 60 minutes\n", err)
 		tickInterval = 1 // Default to 60 minutes if conversion fails or not set
 	}
 
