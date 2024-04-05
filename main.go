@@ -19,6 +19,38 @@ import (
 	"google.golang.org/api/option"
 )
 
+func loadCredentials() (*oauth2.Config, error) {
+	credentialsPath := getCredentialsPath() // Adjust this function to determine the path
+	b, err := ioutil.ReadFile(credentialsPath)
+	if err != nil {
+		return nil, fmt.Errorf("unable to read client secret file: %v", err)
+	}
+	return google.ConfigFromJSON(b, calendar.CalendarScope)
+}
+
+// New or updated initializeCalendarService function
+func initializeCalendarService() (*calendar.Service, error) {
+	oauth2Config, err := loadOAuth2Config()
+	if err != nil {
+		return nil, fmt.Errorf("error loading OAuth2 configuration: %v", err)
+	}
+	client := getClient(oauth2Config)
+	return calendar.NewService(context.Background(), option.WithHTTPClient(client))
+}
+
+func getCredentialsPath() string {
+	// Check if running in Docker with secrets available
+	if path, exists := os.LookupEnv("CREDENTIALS_SECRET_PATH"); exists {
+		return path // Use Docker secret path if available
+	}
+	return "./credentials/credentials.json" // Fallback to default location
+}
+
+// New function to load OAuth2 configuration
+func loadOAuth2Config() (*oauth2.Config, error) {
+	return loadCredentials()
+}
+
 // Retrieve a token, saves the token, then returns the generated client.
 func getClient(config *oauth2.Config) *http.Client {
 	// The file token.json stores the user's access and refresh tokens, and is
@@ -77,7 +109,7 @@ func saveToken(path string, token *oauth2.Token) {
 
 type Config struct {
 	TotalRemainingOn string
-	TimeZone         string
+	TimeZone         string //Asia/Karachi (option)
 	PayDate          int
 	TickInterval     time.Duration // Tick interval in minutes
 }
@@ -103,14 +135,14 @@ func getConfig() Config {
 	// Convert PAY_DATE from string to int
 	payDate, err := strconv.Atoi(payDateStr)
 	if err != nil {
-		log.Printf("Error converting PAY_DATE to int or not set: %v, using default value 16\n", err)
-		payDate = 1 // Default to 16 if conversion fails or not set
+		log.Printf("Error converting PAY_DATE to int or not set: %v, using default value 1\n", err)
+		payDate = 1 // Default to 1 if conversion fails or not set
 	}
 	// Convert RUN_TIMER from string to int and then to duration in minutes
 	tickInterval, err := strconv.Atoi(tickIntervalStr)
 	if err != nil {
 		log.Printf("Error converting RUN_TIMER to int or not set: %v, using default value 60 minutes\n", err)
-		tickInterval = 1 // Default to 60 minutes if conversion fails or not set
+		tickInterval = 60 // Default to 60 minutes if conversion fails or not set
 	}
 
 	config.PayDate = payDate
@@ -307,23 +339,10 @@ func manageTotalRemainingEventForMonth(srv *calendar.Service, total float64, yea
 func taskToRun() {
 	config := getConfig() // Get configuration from environment variables
 
-	// Load OAuth2 configuration from your credentials file
-	b, err := ioutil.ReadFile("./credentials/credentials.json")
+	// Initialize Google Calendar service with OAuth2 client
+	srv, err := initializeCalendarService()
 	if err != nil {
-		log.Fatalf("Unable to read client secret file: %v", err)
-	}
-
-	// Parse the OAuth2 configuration
-	oauth2Config, err := google.ConfigFromJSON(b, calendar.CalendarScope)
-	if err != nil {
-		log.Fatalf("Unable to parse client secret file to config: %v", err)
-	}
-
-	// Get the client using the OAuth2 configuration and previously saved token
-	client := getClient(oauth2Config)
-	srv, err := calendar.NewService(context.Background(), option.WithHTTPClient(client))
-	if err != nil {
-		log.Fatalf("Unable to retrieve Calendar client: %v", err)
+		log.Fatalf("Error initializing Google Calendar service: %v", err)
 	}
 
 	loc, err := time.LoadLocation(config.TimeZone)
