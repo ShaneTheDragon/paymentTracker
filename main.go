@@ -43,7 +43,7 @@ func getCredentialsPath() string {
 	if path, exists := os.LookupEnv("CREDENTIALS_SECRET_PATH"); exists {
 		return path // Use Docker secret path if available
 	}
-	return "./credentials/credentials.json" // Fallback to default location
+	return "/run/secrets/credentials.json" // Default to Docker secret location
 }
 
 // New function to load OAuth2 configuration
