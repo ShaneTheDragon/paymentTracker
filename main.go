@@ -20,7 +20,7 @@ import (
 )
 
 func loadCredentials() (*oauth2.Config, error) {
-	credentialsPath := getCredentialsPath() // Adjust this function to determine the path
+	credentialsPath := getCredentialsPath()
 	b, err := ioutil.ReadFile(credentialsPath)
 	if err != nil {
 		return nil, fmt.Errorf("unable to read client secret file: %v", err)
@@ -28,7 +28,6 @@ func loadCredentials() (*oauth2.Config, error) {
 	return google.ConfigFromJSON(b, calendar.CalendarScope)
 }
 
-// New or updated initializeCalendarService function
 func initializeCalendarService() (*calendar.Service, error) {
 	oauth2Config, err := loadOAuth2Config()
 	if err != nil {
@@ -39,24 +38,18 @@ func initializeCalendarService() (*calendar.Service, error) {
 }
 
 func getCredentialsPath() string {
-	// Check if running in Docker with secrets available
 	if path, exists := os.LookupEnv("CREDENTIALS_SECRET_PATH"); exists {
-		return path // Use Docker secret path if available
+		return path
 	}
-	return "/run/secrets/credentials.json" // Default to Docker secret location
+	return "/run/secrets/credentials.json"
 }
 
-// New function to load OAuth2 configuration
 func loadOAuth2Config() (*oauth2.Config, error) {
 	return loadCredentials()
 }
 
-// Retrieve a token, saves the token, then returns the generated client.
 func getClient(config *oauth2.Config) *http.Client {
-	// The file token.json stores the user's access and refresh tokens, and is
-	// created automatically when the authorization flow completes for the first
-	// time.
-	tokFile := "token.json"
+	tokFile := getTokenFilePath()
 	tok, err := tokenFromFile(tokFile)
 	if err != nil {
 		tok = getTokenFromWeb(config)
@@ -65,11 +58,16 @@ func getClient(config *oauth2.Config) *http.Client {
 	return config.Client(context.Background(), tok)
 }
 
-// Request a token from the web, then returns the retrieved token.
+func getTokenFilePath() string {
+	if path, exists := os.LookupEnv("TOKEN_SECRET_PATH"); exists {
+		return path
+	}
+	return "/run/secrets/token.json" // Default token file location
+}
+
 func getTokenFromWeb(config *oauth2.Config) *oauth2.Token {
 	authURL := config.AuthCodeURL("state-token", oauth2.AccessTypeOffline)
-	fmt.Printf("Go to the following link in your web browser then type the "+
-		"authorization code: \n%v\n", authURL)
+	fmt.Printf("Go to the following link in your web browser then type the authorization code: \n%v\n", authURL)
 
 	var authCode string
 	fmt.Println("Enter the authorization code here: ")
@@ -84,7 +82,6 @@ func getTokenFromWeb(config *oauth2.Config) *oauth2.Token {
 	return tok
 }
 
-// Retrieves a token from a local file.
 func tokenFromFile(file string) (*oauth2.Token, error) {
 	f, err := os.Open(file)
 	if err != nil {
@@ -96,7 +93,6 @@ func tokenFromFile(file string) (*oauth2.Token, error) {
 	return tok, err
 }
 
-// Saves a token to a file path.
 func saveToken(path string, token *oauth2.Token) {
 	fmt.Printf("Saving credential file to: %s\n", path)
 	f, err := os.Create(path)

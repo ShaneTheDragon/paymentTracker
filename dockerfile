@@ -11,5 +11,5 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o paymentTracker .
 FROM alpine:latest
 WORKDIR /root/
 COPY --from=builder /app/paymentTracker .
-COPY --from=builder /app/credentials/credentials.json /run/secrets/credentials.json
+LABEL "io.unraid.docker.icon"="/mnt/user/appdata/paymentTracker/credentials.json"
 CMD ["./paymentTracker"]
