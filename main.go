@@ -41,7 +41,7 @@ func getCredentialsPath() string {
 	if path, exists := os.LookupEnv("CREDENTIALS_SECRET_PATH"); exists {
 		return path
 	}
-	return "credentials/credentials.json"
+	return "/run/secrets/credentials.json"
 }
 
 func loadOAuth2Config() (*oauth2.Config, error) {
