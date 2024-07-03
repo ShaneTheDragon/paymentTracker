@@ -67,7 +67,7 @@ func getClient(config *oauth2.Config) *http.Client {
 }
 
 func getTokenFilePath() string {
-	if path, exists := os.LookupEnv("TOKEN_SECRET_PATH"); exists {
+	if path, exists := os.LookupEnv("/run/secrets/token.json"); exists {
 		return path
 	}
 	return "token.json" // Default token file location
