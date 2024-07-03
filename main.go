@@ -54,6 +54,14 @@ func getClient(config *oauth2.Config) *http.Client {
 	if err != nil {
 		tok = getTokenFromWeb(config)
 		saveToken(tokFile, tok)
+	} else {
+		if tok.Expiry.Before(time.Now()) {
+			tok, err = config.TokenSource(context.Background(), tok).Token()
+			if err != nil {
+				log.Fatalf("Unable to refresh token: %v", err)
+			}
+			saveToken(tokFile, tok)
+		}
 	}
 	return config.Client(context.Background(), tok)
 }
